@@ -1,0 +1,124 @@
+pip install aiogram
+import asyncio
+import logging
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.filters import CommandStart
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+
+# Настройки бота
+BOT_TOKEN = "8245612304:AAFPq9ctJ_DGUyvqXZWc3IaL43gl0t_mVD8"
+
+logging.basicConfig(level=logging.INFO)
+
+# Сценарии игры
+scenarios = [
+    {
+        "step": 1,
+        "question": "Вы нашли в лесу большую несанкционированную свалку пластиковых бутылок. Ваше действие?",
+        "options": [
+            ("Сжечь, чтобы не занимали место", -20, "О нет! Горящий пластик выделяет ядовитый дым. Воздух загрязнен."),
+            ("Собрать и отвезти в пункт приема", +30, "Отлично! Пластик отправится на переработку, природа спасена."),
+            ("Оставить как есть", -10, "Мусор будет разлагаться сотни лет, отравляя почву.")
+        ]
+    },
+    {
+        "step": 2,
+        "question": "Завод по производству упаковки предлагает перейти на биоразлагаемые материалы. Но это дороже на 15%.",
+        "options": [
+            ("Согласиться, экология важнее!", +40, "Прекрасный выбор! Инвестиции в экологию окупятся чистым будущим."),
+            ("Отказаться, это невыгодно", -30, "К сожалению, тонны неразлагаемого пластика продолжают вредить океану."),
+            ("Перейти на бумажные пакеты", +10, "Хороший компромисс, хотя производство бумаги тоже требует вырубки деревьев.")
+        ]
+    },
+    {
+        "step": 3,
+        "question": "У вас дома очень много использованных литиевых батареек. Ваши действия?",
+        "options": [
+            ("Выбросить их", -30, "О нет! Батарейки отравляют почву и воду."),
+            ("Собрать и отвезти их в пункт приема", +10, "Хорошо! Батарейки не принесут вреда природе."),
+            ("Заново зарядить их", +30, "Отлично! Батарейки будут заново использованны.")
+        ]
+    }
+]
+
+router = Router()
+
+def get_keyboard(step_idx: int):
+    """Генерация клавиатуры с вариантами ответа"""
+    scenario = scenarios[step_idx]
+    buttons = []
+    for i, (text, points, response_text) in enumerate(scenario["options"]):
+        # Передаем индекс шага и индекс ответа через callback_data
+        callback_data = f"ans_{step_idx}_{i}"
+        buttons.append([InlineKeyboardButton(text=text, callback_data=callback_data)])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+@router.message(CommandStart())
+async def cmd_start(message: Message):
+    user_data = {"score": 0, "step": 0}
+    # Можно использовать FSMContext для сохранения состояния, но для простоты храним в словаре message.from_user.id
+    # Инициализируем bot.data если оно не существует
+    if not hasattr(message.bot, 'data'):
+        message.bot.data = {}
+    message.bot.data[f"user_{message.from_user.id}"] = user_data
+
+    await message.answer(
+        "🌿 **Добро пожаловать в Эко-квест!** 🌿\n\n"
+        "Вы эколог, который управляет целым городом. Ваша задача — принимать решения, "
+        "которые помогут сохранить природу.\n\n"
+        "Начнем сценарий 1:",
+        parse_mode="Markdown"
+    )
+
+    scenario = scenarios[0]
+    await message.answer(scenario["question"], reply_markup=get_keyboard(0))
+
+@router.callback_query(F.data.startswith("ans_"))
+async def handle_answer(callback: CallbackQuery):
+    _, step_idx_str, option_idx_str = callback.data.split("_")
+    step_idx = int(step_idx_str)
+    option_idx = int(option_idx_str)
+
+    # Получаем данные пользователя (в реальном проекте используйте хранилище FSM)
+    user_key = f"user_{callback.from_user.id}"
+    # Инициализируем bot.data если оно не существует
+    if not hasattr(callback.bot, 'data'):
+        callback.bot.data = {}
+    if user_key not in callback.bot.data:
+        callback.bot.data[user_key] = {"score": 0, "step": 0}
+
+    user_data = callback.bot.data[user_key]
+
+    # Обработка ответа
+    scenario = scenarios[step_idx]
+    _, points, response_text = scenario["options"][option_idx]
+
+    user_data["score"] += points
+    next_step = step_idx + 1
+
+    await callback.answer(response_text, show_alert=True) # Добавим оповещение пользователю
+
+    if next_step < len(scenarios):
+        # Переходим к следующему шагу
+        next_scenario = scenarios[next_step]
+        user_data["step"] = next_step
+        await callback.message.answer(next_scenario["question"], reply_markup=get_keyboard(next_step))
+    else:
+        # Игра окончена
+        final_score = user_data["score"]
+        await callback.message.answer(
+            f"Игра окончена! Ваш итоговый счет: {final_score}.\n\n"
+            "Спасибо за участие в Эко-квесте!"
+        )
+
+
+async def main():
+    bot = Bot(token=BOT_TOKEN)
+    dp = Dispatcher()
+    dp.include_router(router)
+    # Make bot.data accessible within handlers for user state management
+    dp["bot_data"] = {}
+    await dp.start_polling(bot)
+
+# Removed if __name__ == "__main__": and directly await main()
+await main()
